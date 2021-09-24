@@ -2,9 +2,10 @@
 """
 A module for documenting ontologies.
 """
-import os
+from pathlib import Path
 import re
 import time
+from typing import TYPE_CHECKING
 import warnings
 import shlex
 import shutil
@@ -17,6 +18,11 @@ import owlready2
 
 from ontopy.utils import asstring, camelsplit, get_label
 from ontopy.graph import OntoGraph, filter_classes
+
+if TYPE_CHECKING:
+    from _typeshed import StrPath
+    from typing import Optional, Sequence
+
 
 
 class OntoDoc:
@@ -163,8 +169,7 @@ class OntoDoc:
 
     def get_default_template(self):
         """Returns default template."""
-        title = os.path.splitext(
-            os.path.basename(self.onto.base_iri.rstrip('/#')))[0]
+        title = Path(self.onto.base_iri.rstrip('/#')).stem
         irilink = self.style.get('link', '{name}').format(
             name=self.onto.base_iri, url=self.onto.base_iri,
             lowerurl=self.onto.base_iri)
@@ -481,13 +486,13 @@ class DocPP:
     #   * Branch leaves are only looked up in the file witht the %BRANCH
     #     directive, not in all included files as expedted.
 
-    def __init__(self, template, ontodoc, basedir='.', figdir='genfigs',
+    def __init__(self, template, ontodoc, basedir: "Optional[StrPath]" = None, figdir: "Optional[StrPath]" = None,
                  figformat='png', figscale=1.0, maxwidth=None,
                  imported=False):
         self.lines = template.split('\n')
         self.ontodoc = ontodoc
-        self.basedir = basedir
-        self.figdir = os.path.join(basedir, figdir)
+        self.basedir = Path(basedir if basedir else ".")
+        self.figdir = basedir / (figdir if figdir is not None else "genfigs")
         self.figformat = figformat
         self.figscale = figscale
         self.maxwidth = maxwidth
@@ -567,7 +572,7 @@ class DocPP:
                 opts = get_options(tokens[2:], caption='', width=0)
                 del self.lines[i]
                 self.lines[i: i] = self.ontodoc.get_figure(
-                    os.path.join(self.basedir, path),
+                    self.basedir / path,
                     caption=opts.caption, width=opts.width).split('\n')
 
     def process_entities(self):
@@ -610,7 +615,7 @@ class DocPP:
                 self.lines[i: i] = self.ontodoc.itemsdoc(
                     branch, int(opts.header_level)).split('\n')
 
-    def _make_branchfig(self, name, path, terminated, include_leafs,
+    def _make_branchfig(self, name, path: "StrPath", terminated, include_leafs,
                         strict_leafs, width, leafs, relations, edgelabels,
                         rankdir, legend,
                         included_namespaces, included_ontologies):
@@ -645,10 +650,10 @@ class DocPP:
         else:
             leafs = None
         if path:
-            figdir = os.path.dirname(path)
-            formatext = os.path.splitext(path)[1]
-            if formatext:
-                format = formatext.lstrip('.')
+            path = Path(path)
+            figdir = path.parent
+            if path.suffix:
+                format = path.suffix.lstrip('.')
             else:
                 format = self.figformat
                 path += '.' + format
@@ -656,7 +661,7 @@ class DocPP:
             figdir = self.figdir
             format = self.figformat
             term = 'T' if terminated else ''
-            path = os.path.join(figdir, name + term) + '.' + format
+            path = figdir / (name + term + '.' + format)
 
         # Create graph
         graph = OntoGraph(onto, graph_attr={'rankdir': rankdir})
@@ -675,10 +680,8 @@ class DocPP:
             if self.maxwidth and width > self.maxwidth:
                 width = self.maxwidth
 
-        filepath = os.path.join(self.basedir, path)
-        destdir = os.path.dirname(filepath)
-        if not os.path.exists(destdir):
-            os.makedirs(destdir)
+        filepath = self.basedir / path
+        filepath.parent.mkdir(exist_ok=True)
         graph.save(filepath, format=format)
         return filepath, leafs, width
 
@@ -837,13 +840,12 @@ class DocPP:
                 tokens = shlex.split(line)
                 filepath = tokens[1]
                 opts = get_options(tokens[2:], shift=0)
-                with open(os.path.join(self.basedir, filepath), 'rt') as f:
-                    docpp = DocPP(
-                        f.read(), self.ontodoc,
-                        basedir=os.path.dirname(filepath),
-                        figformat=self.figformat, figscale=self.figscale,
-                        maxwidth=self.maxwidth)
-                    docpp.figdir = self.figdir
+                docpp = DocPP(
+                    (self.basedir / filepath).read_text(), self.ontodoc,
+                    basedir=Path(filepath).parent,
+                    figformat=self.figformat, figscale=self.figscale,
+                    maxwidth=self.maxwidth)
+                docpp.figdir = self.figdir
                 if opts.shift:
                     docpp.shift_header_levels(int(opts.shift))
                 docpp.process()
@@ -981,7 +983,7 @@ def append_pandoc_options(options, updates):
     return new_options
 
 
-def run_pandoc(genfile, outfile, format, pandoc_option_files=(),
+def run_pandoc(genfile, outfile, format, pandoc_option_files: "Sequence[StrPath]" = (),
                pandoc_options=(), verbose=True):
     """Runs pandoc.
 
@@ -1011,11 +1013,11 @@ def run_pandoc(genfile, outfile, format, pandoc_option_files=(),
     """
     # Create pandoc argument list
     args = [genfile]
-    files = ['pandoc-options.yaml', 'pandoc-%s-options.yaml' % format]
+    files = [Path(_) for _ in ('pandoc-options.yaml', f'pandoc-{format}-options.yaml')]
     if pandoc_option_files:
-        files = pandoc_option_files
+        files = [Path(_) for _ in pandoc_option_files]
     for fname in files:
-        if os.path.exists(fname):
+        if fname.exists():
             args.extend(load_pandoc_option_file(fname))
         else:
             warnings.warn('missing pandoc option file: %s' % fname)
@@ -1042,13 +1044,15 @@ def run_pandoc(genfile, outfile, format, pandoc_option_files=(),
         subprocess.check_call(cmd)
 
 
-def run_pandoc_pdf(latex_dir, pdf_engine, outfile, args, verbose=True):
+def run_pandoc_pdf(latex_dir: "StrPath", pdf_engine, outfile: "StrPath", args, verbose=True):
     """Run pandoc for pdf generation."""
-    basename = os.path.join(latex_dir, os.path.splitext(
-        os.path.basename(outfile))[0])
+    latex_dir = Path(latex_dir)
+    outfile = Path(outfile)
+
+    basename = latex_dir / outfile.stem
 
     # Run pandoc
-    texfile = basename + '.tex'
+    texfile = basename.with_suffix('.tex')
     args.append('--output=%s' % texfile)
     cmd = ['pandoc'] + args
     if verbose:
@@ -1058,15 +1062,13 @@ def run_pandoc_pdf(latex_dir, pdf_engine, outfile, args, verbose=True):
     subprocess.check_call(cmd)
 
     # Fixing tex output
-    texfile2 = basename + '2.tex'
-    with open(texfile, 'rt') as f:
-        content = f.read().replace(r'\$\Uptheta\$', r'$\Uptheta$')
-    with open(texfile2, 'wt') as f:
-        f.write(content)
+    texfile2 = basename.with_name(f'{basename.name}2.tex')
+    content = texfile.read_text().replace(r'\$\Uptheta\$', r'$\Uptheta$')
+    texfile2.write_text(content)
 
     # Run latex
-    pdffile = basename + '2.pdf'
-    cmd = [pdf_engine, texfile2, '-halt-on-error',
+    pdffile = texfile2.with_suffix(".pdf")
+    cmd = [pdf_engine, str(texfile2), '-halt-on-error',
            '-output-directory=%s' % latex_dir]
     if verbose:
         print()
@@ -1075,35 +1077,35 @@ def run_pandoc_pdf(latex_dir, pdf_engine, outfile, args, verbose=True):
     output = subprocess.check_output(cmd, timeout=60)
 
     # Workaround for non-working "-output-directory" latex option
-    if not os.path.exists(pdffile):
-        if os.path.exists(os.path.basename(pdffile)):
-            pdffile = os.path.basename(pdffile)
+    if not pdffile.exists():
+        if pdffile.relative_to(Path.cwd()).exists():
+            pdffile = pdffile.relative_to(Path.cwd())
             for ext in 'aux', 'out', 'toc', 'log':
-                filename = os.path.splitext(pdffile)[0] + '.' + ext
-                if os.path.exists(filename):
-                    os.remove(filename)
+                filename = pdffile.with_suffix('.' + ext)
+                if filename.exists():
+                    filename.unlink(filename)
         else:
             print()
             print(output)
             print()
-            raise RuntimeError('latex did not produce pdf file: ' + pdffile)
+            raise RuntimeError(f'latex did not produce pdf file: {pdffile}')
 
     # Copy pdffile
-    if not os.path.exists(outfile) or not os.path.samefile(pdffile, outfile):
+    if not outfile.exists() or not pdffile.samefile(outfile):
         if verbose:
             print()
-            print('move %s to %s' % (pdffile, outfile))
+            print(f'move {pdffile} to {outfile}')
         shutil.move(pdffile, outfile)
 
 
-def get_format(outfile, format=None):
+def get_format(outfile: "StrPath", format: "Optional[str]" = None):
     """Infer format from outfile and format."""
+    outfile = Path(outfile)
     if format is None:
-        format = os.path.splitext(outfile)[1]
+        format = outfile.suffix
     if not format:
         format = 'html'
-    if format.startswith('.'):
-        format = format[1:]
+    format = format.lstrip(".")
     return format
 
 
@@ -1138,16 +1140,16 @@ def get_maxwidth(format):
     return maxwidth
 
 
-def get_docpp(ontodoc, infile, figdir='genfigs', figformat='png',
+def get_docpp(ontodoc, infile: "StrPath", figdir='genfigs', figformat='png',
               maxwidth=None, imported=False):
     """Read `infile` and return a new docpp instance."""
     if infile:
-        with open(infile, 'rt') as f:
-            template = f.read()
-        basedir = os.path.dirname(infile)
+        infile = Path(infile)
+        template = infile.read_text()
+        basedir = infile.parent
     else:
         template = ontodoc.get_default_template()
-        basedir = '.'
+        basedir = Path.cwd()
 
     docpp = DocPP(template, ontodoc, basedir=basedir, figdir=figdir,
                   figformat=figformat, maxwidth=maxwidth, imported=imported)

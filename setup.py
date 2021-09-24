@@ -2,46 +2,32 @@
 """
 Python reference API for the Europeean Materials & Modelling Ontology (EMMO).
 """
-import os
+from glob import glob
+from pathlib import Path
 import re
 import setuptools
-from glob import glob
 
 
-rootdir = os.path.dirname(__file__)
+rootdir = Path(__file__).parent
 
 
-def rglob(patt):
-    """Recursive glob function that only returns ordinary files."""
-    return [f for f in glob(patt, recursive=True) if os.path.isfile(f)]
-
-
-def fglob(patt):
-    """Glob function that only returns ordinary files."""
-    return [f for f in glob(patt) if os.path.isfile(f) and not f.endswith('~')]
-
-
-# Read long description from README.md file replacing references to local
-# files to github urls
+# Read long description from README.md file replacing local references to
+# full URLs to support PyPI/external linking.
 baseurl = 'https://raw.githubusercontent.com/emmo-repo/EMMO-python/master/'
-with open(os.path.join(rootdir, 'README.md'), 'rt') as f:
-    long_description = re.sub(
-        r'(\[[^]]+\])\(([^:)]+)\)', r'\1(%s\2)' % baseurl, f.read())
-
-# Read requirements from requirements.txt file
-with open(os.path.join(rootdir, 'requirements.txt'), 'rt') as f:
-    REQUIREMENTS = f.read().split()
+long_description = re.sub(
+    r'(\[[^]]+\])\(([^:)]+)\)', fr'\1({baseurl}\2)',
+    Path(rootdir / 'README.md').read_text()
+)
 
 # Retrieve emmo-package version
-with open(os.path.join(rootdir, 'ontopy/__init__.py')) as handle:
-    for line in handle:
-        match = re.match(r"__version__ = '(?P<version>.*)'", line)
-        if match is not None:
-            VERSION = match.group("version")
-            break
-    else:
-        raise RuntimeError(
-            f'Could not determine package version from {handle.name} !')
+for line in (rootdir / 'ontopy' / '__init__.py').read_text().splitlines(keepends=False):
+    match = re.match(r"__version__ = '(?P<version>.*)'", line)
+    if match is not None:
+        VERSION = match.group("version")
+        break
+else:
+    raise RuntimeError(
+        f'Could not determine package version from ontopy/__init__.py !')
 
 
 setuptools.setup(
@@ -70,7 +56,7 @@ setuptools.setup(
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
         "Topic :: Software Development :: Libraries :: Python Modules",
     ],
-    install_requires=REQUIREMENTS,
+    install_requires=(rootdir / "requirements.txt").read_text().splitlines(keepends=False),
     packages=setuptools.find_packages(),
     scripts=['tools/ontodoc',
              'tools/ontograph',
@@ -93,9 +79,8 @@ setuptools.setup(
         ),
         (
             'share/EMMO-python/examples/emmodoc/figs',
-            fglob('examples/emmodoc/figs/*'),
+            [str(_.relative_to(rootdir)) for _ in rootdir.glob('examples/emmodoc/figs/*') if _.is_file()],
         ),
-        # ('share/EMMO-python/examples', rglob('examples/**')),
-        ('share/EMMO-python/demo', rglob('demo/**')),
+        ('share/EMMO-python/demo', [str(_.relative_to(rootdir)) for _ in rootdir.rglob('demo/**') if _.is_file()]),
     ],
 )

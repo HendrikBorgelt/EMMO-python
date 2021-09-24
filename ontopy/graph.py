@@ -2,9 +2,10 @@
 """
 A module for visualising ontologies using graphviz.
 """
-import os
+from pathlib import Path
 import re
 import tempfile
+from typing import TYPE_CHECKING
 import xml.etree.ElementTree as ET
 
 import owlready2
@@ -12,6 +13,10 @@ import graphviz
 
 from ontopy.utils import asstring, get_label
 from ontopy.ontology import get_ontology
+
+if TYPE_CHECKING:
+    from _typeshed import StrPath
+    from typing import Optional
 
 typenames = owlready2.class_construct._restriction_type_2_label
 
@@ -674,12 +679,12 @@ class OntoGraph:
 
         return relations
 
-    def save(self, filename, format=None, **kwargs):
+    def save(self, filename: "StrPath", format=None, **kwargs):
         """Saves graph to `filename`.  If format is not given, it is
         inferred from `filename`."""
-        base, ext = os.path.splitext(filename)
+        filename = Path(filename) if isinstance(filename, str) else filename
         if format is None:
-            format = ext.lstrip('.')
+            format = filename.suffix.lstrip('.')
         kwargs.setdefault('cleanup', True)
         if format in ('graphviz', 'gv'):
             if 'dictionary' in kwargs:
@@ -687,7 +692,7 @@ class OntoGraph:
             else:
                 self.dot.save(filename)
         else:
-            self.dot.render(base, format=format, **kwargs)
+            self.dot.render(filename.stem, format=format, **kwargs)
 
     def view(self):
         """Shows the graph in a viewer."""
@@ -696,7 +701,7 @@ class OntoGraph:
     def get_figsize(self):
         """Returns the default figure size (width, height) in points."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            tmpfile = os.path.join(tmpdir, 'graph.svg')
+            tmpfile = Path(tmpdir) / 'graph.svg'
             self.save(tmpfile)
             xml = ET.parse(tmpfile)
             svg = xml.getroot()
@@ -767,7 +772,7 @@ def get_module_dependencies(iri_or_onto, strip_base=None):
     return modules
 
 
-def plot_modules(src, filename=None, format=None, show=False,
+def plot_modules(src, filename: "Optional[StrPath]" = None, format=None, show=False,
                  strip_base=None, ignore_redundant=True):
     """Plot module dependency graph for `src` and return a graph object.
 
@@ -810,10 +815,10 @@ def plot_modules(src, filename=None, format=None, show=False,
             dot.edge(depname, iriname)
 
     if filename:
-        base, ext = os.path.splitext(filename)
+        filename = Path(filename) if isinstance(filename, str) else filename
         if format is None:
-            format = ext.lstrip('.')
-        dot.render(base, format=format, view=False, cleanup=True)
+            format = filename.suffix.lstrip('.')
+        dot.render(filename.stem, format=format, view=False, cleanup=True)
 
     if show:
         dot.view(cleanup=True)
@@ -993,10 +998,10 @@ def cytoscapegraph(graph, onto=None, infobox=None, style=None):
                     pass
                 try:
                     fig = node["data"]["label"]
-                    if os.path.exists(Path(fig+'.png')):
+                    if Path(fig + '.png').exists():
                         display(Image(fig+'.png', width=100))
-                    elif os.path.exists(Path(fig+'.jpg')):
-                        display(Image(fig+'.jpg', width=100))
+                    elif Path(fig + '.jpg').exists():
+                        display(Image(fig + '.jpg', width=100))
                 except Exception:  # FIXME: make this more specific
                     pass
                 out.clear_output(wait=True)

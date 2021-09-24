@@ -17,15 +17,14 @@ that are mapped into properties of the generated metadata entities.
 
 The generated  metadata is finally serialised into a JSON file.
 """
-import os
+from pathlib import Path
 
 from ontopy import get_ontology
 from emmo2meta import EMMO2Meta
 
 
 # Load our ontology from the vertical case
-ontopath = os.path.abspath(os.path.join(
-    os.path.dirname(__file__), '..', 'vertical', 'usercase_ontology.owl'))
+ontopath = (Path(__file__).parent.parent / 'vertical' / 'usercase_ontology.owl').resolve()
 onto = get_ontology(ontopath)
 onto.load()
 

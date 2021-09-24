@@ -17,7 +17,7 @@ A module adding graphing functionality to ontopy.ontology
 #     very useful interface to Jupyter Notebook and Qt Console integration,
 #     see https://pypi.org/project/graphviz/.
 #
-import os
+from pathlib import Path
 import re
 import warnings
 import tempfile
@@ -442,7 +442,7 @@ def get_figsize(graph):
     """Returns figure size (width, height) in points of figures for the
     current pydot graph object `graph`."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        tmpfile = os.path.join(tmpdir, 'graph.svg')
+        tmpfile = Path(tmpdir) / 'graph.svg'
         graph.write_svg(tmpfile)
         xml = ET.parse(tmpfile)
         svg = xml.getroot()

@@ -11,10 +11,13 @@ If desirable some of this may be moved back into owlready2.
 import os
 import itertools
 import inspect
-import warnings
-import uuid
+from pathlib import Path
 import tempfile
 import types
+from urllib.parse import urlparse, urlunparse
+import uuid
+import warnings
+from typing import TYPE_CHECKING
 from collections import defaultdict
 
 import rdflib
@@ -37,6 +40,11 @@ from ontopy.utils import (
     _validate_installed_version,
 )
 from ontopy.ontograph import OntoGraph  # FIXME: deprecate...
+
+if TYPE_CHECKING:
+    from _typeshed import StrPath
+    from urllib.parse import ParseResult
+    from typing import Optional, Union
 
 
 # Default annotations to look up
@@ -67,7 +75,7 @@ class World(owlready2.World):
         self._iri_mappings = {}     # all iri mappings loaded so far
         super().__init__(*args, **kwargs)
 
-    def get_ontology(self, base_iri='emmo-inferred'):
+    def get_ontology(self, base_iri: Optional[str] = 'emmo-inferred'):
         """Returns a new Ontology from `base_iri`.
 
         The `base_iri` argument may be one of:
@@ -97,12 +105,12 @@ class World(owlready2.World):
         elif base_iri + '/' in self.ontologies:
             onto = self.ontologies[base_iri + '/']
         else:
-            if os.path.exists(base_iri):
-                iri = os.path.abspath(base_iri)
-            elif os.path.exists(base_iri + '.ttl'):
-                iri = os.path.abspath(base_iri + '.ttl')
-            elif os.path.exists(base_iri + '.owl'):
-                iri = os.path.abspath(base_iri + '.owl')
+            if Path(base_iri).exists():
+                iri = Path(base_iri).resolve()
+            elif Path(base_iri).with_suffix('.ttl').exists():
+                iri = Path(base_iri).with_suffix('.ttl').resolve()
+            elif Path(base_iri).with_suffix('.owl'):
+                iri = Path(base_iri).with_suffix('.owl').resolve()
             else:
                 iri = base_iri
 
@@ -149,6 +157,9 @@ class Ontology(owlready2.Ontology, OntoGraph):
         fset=lambda self, v: setattr(self, '_dir_imported', bool(v)),
         doc='Whether to include imported ontologies in dir() '
         'listing.')
+
+    def __init__(self, world: owlready2.World, base_iri: "Union[str, Path]", name: "Optional[str]" = None) -> None:
+        super().__init__(world, str(base_iri), name=name)
 
     def __dir__(self):
         s = set(super().__dir__())
@@ -344,27 +355,26 @@ class Ontology(owlready2.Ontology, OntoGraph):
 
         return self
 
-    def _load(self, only_local=False, filename=None, format=None,
+    def _load(self, only_local=False, filename: "StrPath" = None, format=None,
               reload=None, reload_if_newer=False, url_from_catalog=None,
               catalog_file='catalog-v001.xml', tmpdir=None,
               **kwargs):
-        """Help function for _load()."""
-        web_protocol = 'http://', 'https://', 'ftp://'
+        """Help function for load()."""
+        web_protocols = ('http', 'https', 'ftp')
 
-        url = filename if filename else self.base_iri.rstrip('/#')
-        if url.startswith(web_protocol):
-            baseurl = os.path.dirname(url)
-            catalogurl = baseurl + '/' + catalog_file
+        url = urlparse(filename if filename else self.base_iri.rstrip('/#'))
+        if url.scheme in web_protocols:
+            catalogurl = str(Path(urlunparse(url)).parent / catalog_file)
+            url = urlunparse(url)
         else:
-            if url.startswith('file://'):
-                url = url[7:]
-            url = os.path.normpath(os.path.abspath(url))
-            baseurl = os.path.dirname(url)
-            catalogurl = os.path.join(baseurl, catalog_file)
+            url = Path(url.path).resolve()
+            catalogurl = str(url.parent / catalog_file)
+            url = str(url)
 
-        def getmtime(path):
-            if os.path.exists(path):
-                return os.path.getmtime(path)
+        def getmtime(path: "StrPath"):
+            path = Path(path)
+            if path.exists():
+                return path.stat().st_mtime
             return 0.0
 
         # Resolve url from catalog file
@@ -439,7 +449,7 @@ class Ontology(owlready2.Ontology, OntoGraph):
                                         reload_if_newer=reload_if_newer,
                                         format='rdfxml',
                                         **kwargs)
-            elif resolved_url.startswith(web_protocol):
+            elif urlparse(resolved_url).scheme in web_protocols:
                 return super().load(only_local=only_local,
                                     reload=reload,
                                     reload_if_newer=reload_if_newer,
@@ -466,7 +476,7 @@ class Ontology(owlready2.Ontology, OntoGraph):
 
             # Copy the ontology into a local folder and try again
             with tempfile.TemporaryDirectory() as tmpdir:
-                output = os.path.join(tmpdir, os.path.basename(resolved_url))
+                output = Path(tmpdir) / Path(resolved_url).name
                 convert_imported(input=resolved_url,
                                  output=output,
                                  input_format=fmt,
@@ -483,14 +493,15 @@ class Ontology(owlready2.Ontology, OntoGraph):
                                         format='rdfxml',
                                         **kwargs)
 
-    def save(self, filename=None, format=None, overwrite=False, **kwargs):
+    def save(self, filename: "StrPath" = None, format=None, overwrite=False, **kwargs):
         """Writes the ontology to file.
 
         If `overwrite` is true and filename exists, it will be removed
         before saving.  The default is to append an existing ontology.
         """
-        if overwrite and filename and os.path.exists(filename):
-            os.remove(filename)
+        filename: "Optional[Path]" = None if filename is None else Path(filename)
+        if overwrite and filename and filename.exists():
+            filename.unlink()
 
         if not format:
             format = guess_format(filename, fmap=FMAP)
@@ -515,7 +526,7 @@ class Ontology(owlready2.Ontology, OntoGraph):
 
         if format in OWLREADY2_FORMATS:
             revmap = {v: k for k, v in FMAP.items()}
-            super().save(file=filename, format=revmap[format], **kwargs)
+            super().save(file=str(filename), format=revmap[format], **kwargs)
         else:
             with tempfile.NamedTemporaryFile(suffix='.owl') as f:
                 super().save(file=f.name, format='rdfxml', **kwargs)

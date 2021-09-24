@@ -7,6 +7,7 @@ import datetime
 import tempfile
 import types
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse, urlunparse
 import urllib.request
 import warnings
 import xml.etree.ElementTree as ET
@@ -19,6 +20,7 @@ import owlready2
 
 if TYPE_CHECKING:
     from packaging.version import Version, LegacyVersion
+    from urllib.parse import ParseResult
     from typing import Union
 
 
@@ -188,7 +190,7 @@ class ReadCatalogError(IOError):
     pass
 
 
-def read_catalog(uri, catalog_file='catalog-v001.xml', baseuri=None,
+def read_catalog(uri: "Union[str, ParseResult]", catalog_file='catalog-v001.xml', baseuri=None,
                  recursive=False, return_paths=False):
     """Reads a Protègè catalog file and returns as a dict.
 
@@ -215,8 +217,10 @@ def read_catalog(uri, catalog_file='catalog-v001.xml', baseuri=None,
     A ReadCatalogError is raised if the catalog file cannot be found.
     """
     # Protocols supported by urllib.request
-    web_protocols = 'http://', 'https://', 'ftp://'
-    if uri.startswith(web_protocols):
+    web_protocols = ('http', 'https', 'ftp')
+
+    uri = urlparse(uri) if isinstance(uri, str) else uri
+    if uri.scheme in web_protocols:
         # Call read_catalog() recursively to ensure that the temporary
         # file is properly cleaned up
         with tempfile.TemporaryDirectory() as tmpdir:

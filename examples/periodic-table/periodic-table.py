@@ -1,9 +1,10 @@
+from pathlib import Path
+import types
+
 from ontopy import World
 from ontopy.utils import write_catalog
 import ase
-import types
 import owlready2
-import os
 
 
 # define function that returns a string in English in owlready2
@@ -100,7 +101,7 @@ onto.sync_attributes(name_policy='uuid', name_prefix='EMMO_')
 version_iri = "http://emmo.info/emmo/1.0.0-beta/domain/periodic-table"
 onto.set_version(version_iri=version_iri)
 onto.dir_label = False
-thisdir = os.path.abspath(os.path.dirname(__file__))
+thisdir = Path(__file__).parent.resolve()
 catalog_mappings[version_iri] = 'periodic-table.ttl'
 
 onto.metadata.abstract.append(en(
@@ -136,5 +137,5 @@ onto.metadata.comment.append(en(
     'University of Bologna (IT)\n'
     'email: emanuele.ghedini@unibo.it'
     ))
-onto.save(os.path.join(thisdir, 'periodic-table.ttl'), overwrite=True)
+onto.save(thisdir / 'periodic-table.ttl', overwrite=True)
 write_catalog(catalog_mappings)
