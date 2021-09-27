@@ -4,10 +4,11 @@ import os
 import sys
 import re
 import datetime
+from pathlib import Path
 import tempfile
 import types
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import ParseResult, urlparse, urlunparse
 import urllib.request
 import warnings
 import xml.etree.ElementTree as ET
@@ -20,8 +21,8 @@ import owlready2
 
 if TYPE_CHECKING:
     from packaging.version import Version, LegacyVersion
-    from urllib.parse import ParseResult
-    from typing import Union
+    from typing import Optional, Union
+    from xml.etree.ElementTree import Element
 
 
 # Format mappings: file extension -> rdflib format name
@@ -190,7 +191,7 @@ class ReadCatalogError(IOError):
     pass
 
 
-def read_catalog(uri: "Union[str, ParseResult]", catalog_file='catalog-v001.xml', baseuri=None,
+def read_catalog(uri: "Union[str, ParseResult]", catalog_file='catalog-v001.xml', baseuri: "Optional[str]" = None,
                  recursive=False, return_paths=False):
     """Reads a Protègè catalog file and returns as a dict.
 
@@ -219,23 +220,25 @@ def read_catalog(uri: "Union[str, ParseResult]", catalog_file='catalog-v001.xml'
     # Protocols supported by urllib.request
     web_protocols = ('http', 'https', 'ftp')
 
-    uri = urlparse(uri) if isinstance(uri, str) else uri
-    if uri.scheme in web_protocols:
+    if isinstance(uri, (str, Path)) and Path(uri).exists():
+        uri = Path(uri)
+    else:
+        uri = urlparse(uri) if isinstance(uri, str) else uri
+    if isinstance(uri, ParseResult) and uri.scheme in web_protocols:
         # Call read_catalog() recursively to ensure that the temporary
         # file is properly cleaned up
         with tempfile.TemporaryDirectory() as tmpdir:
-            destfile = os.path.join(tmpdir, catalog_file)
+            destfile = Path(tmpdir) / catalog_file
             uris = {  # maps uri to base
-                uri: (
-                    baseuri if baseuri else os.path.dirname(uri)),
-                f'{uri.rstrip("/")}/{catalog_file}': (
-                    baseuri if baseuri else uri.rstrip('/')),
-                f'{os.path.dirname(uri)}/{catalog_file}': (
-                    os.path.dirname(uri)),
+                uri: baseuri if baseuri else urlunparse(Path(uri.path).parent),
+                f'{uri.path.rstrip("/")}/{catalog_file}': (
+                    baseuri if baseuri else urlunparse(uri.path.rstrip('/'))),
+                f'{urlunparse(Path(uri.path).parent)}/{catalog_file}': (
+                    urlunparse(Path(uri.path).parent)),
                 }
             for url, base in uris.items():
                 try:
-                    f, msg = urllib.request.urlretrieve(url, destfile)
+                    _, msg = urllib.request.urlretrieve(url, destfile)
                 except urllib.request.URLError:
                     continue
                 else:
@@ -248,32 +251,32 @@ def read_catalog(uri: "Union[str, ParseResult]", catalog_file='catalog-v001.xml'
                                         return_paths=return_paths)
             raise ReadCatalogError('Cannot download catalog from URLs: ' +
                                    ", ".join(uris))
-    elif uri.startswith('file://'):
-        path = uri[7:]
+    elif isinstance(uri, ParseResult) and uri.scheme == 'file':
+        path = Path(uri.path)
     else:
         path = uri
 
-    if os.path.isdir(path):
-        dirname = os.path.abspath(path)
-        filepath = os.path.join(dirname, catalog_file)
+    if path.is_dir():
+        dirname = path.resolve()
+        filepath = dirname / catalog_file
     else:
-        catalog_file = os.path.basename(path)
-        filepath = os.path.abspath(path)
-        dirname = os.path.dirname(filepath)
+        catalog_file = path.name
+        filepath = path.resolve()
+        dirname = filepath.parent
 
-    def gettag(e):
+    def gettag(e: "Element"):
         return e.tag.rsplit('}', 1)[-1]
 
-    def load_catalog(filepath):
-        if not os.path.exists(filepath):
-            raise ReadCatalogError('No such catalog file: ' + filepath)
-        dirname = os.path.normpath(os.path.dirname(filepath))
+    def load_catalog(filepath: Path):
+        if not filepath.exists():
+            raise ReadCatalogError(f'No such catalog file: {filepath}')
+        dirname = filepath.parent.resolve()
         dirs.add(baseuri if baseuri else dirname)
         xml = ET.parse(filepath)
         root = xml.getroot()
         if gettag(root) != 'catalog':
-            raise ReadCatalogError('expected root tag of catalog file %r to '
-                                   'be "catalog"', filepath)
+            raise ReadCatalogError(f'expected root tag of catalog file {filepath} to '
+                                   'be "catalog"')
         for child in root:
             if gettag(child) == 'uri':
                 load_uri(child, dirname)
@@ -281,21 +284,27 @@ def read_catalog(uri: "Union[str, ParseResult]", catalog_file='catalog-v001.xml'
                 for uri in child:
                     load_uri(uri, dirname)
 
-    def load_uri(uri, dirname):
+    def load_uri(uri: "Element", dirname: Path):
         assert gettag(uri) == 'uri'
-        s = uri.attrib['uri']
-        if s.startswith(web_protocols):
-            if baseuri:
-                url = baseuri.rstrip('/#') + '/' + os.path.basename(s)
-            else:
-                url = s
+        source = uri.attrib['uri']
+
+        if isinstance(source, (str, Path)) and Path(source).exists():
+            source = Path(source)
         else:
-            s = os.path.normpath(s)
-            if baseuri and baseuri.startswith(web_protocols):
-                url = f'{baseuri}/{s}'
+            source = urlparse(source) if isinstance(source, str) else source
+
+        if source.scheme in web_protocols:
+            if baseuri:
+                url = baseuri.rstrip('/#') + '/' + source.name
             else:
-                url = os.path.normpath(os.path.join(
-                    baseuri if baseuri else dirname, s))
+                url = source
+        else:
+            source = source.resolve()
+            if baseuri and baseuri.startswith(web_protocols):
+                url = f'{baseuri}/{source}'
+            else:
+                url = baseuri if baseuri else dirname
+                url = (url / source).resolve()
 
         iris.setdefault(uri.attrib['name'], url)
         if recursive:
